@@ -1,7 +1,9 @@
-//version 1.2 (Entries mod with ADX as barsN and expiration - 16/6/2025)
+//version 1.21 (Spread buffer/retry logic 6/17/2025)
 #property copyright "Copyright 2025, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
 #property version   "1.00"
+#property strict
+#define _Pip (_Point * 10)  // Add this after #property directives
 
 #include <Trade/Trade.mqh>
 #include <Indicators\Trend.mqh>
@@ -13,6 +15,9 @@ COrderInfo        ordinfo;
 
       int adxHandle, fastMAHandle, slowMAHandle,handleTrailMA, handleIchimoku, buybarcounter, sellbarcounter;
       enum     TSLType{Default_Trail=0, Previous_Candle=1, Fast_MA=2, Tenkansen=3};
+      // Add these with your other global variables:
+      double spreadHistory[];
+      int spreadCounter = 0;
 
 
    input group "=== Trading Profiles ==="
@@ -144,11 +149,78 @@ COrderInfo        ordinfo;
       input int BarsN_Medium = 30;        
       input int BarsN_Strong = 15;        
       input int BarsN_VeryStrong = 5;     
-      
-      
-      
-          
 
+      //=== Add this to your existing input groups ===//
+      input group "=== Spread Control [Advanced] ==="
+      
+      input bool   UseSpreadControl    = true;     // Enable spread-based execution?
+      input int    MaxSpreadForExec    = 15;       // Max allowed spread (pips)
+      input int    SpreadSmoothingBars = 3;        // Bars to average spread over
+      input bool   EnableRetry         = true;     // Auto-retry deleted orders?
+      input int    RetryAfterBars      = 5;        // Bars to wait before retry
+      input double MaxRetryPriceDistance = 50;     // Max distance (points) for retry
+      
+      input group "=== Trend Override ==="
+      
+      input bool   UseADXOverride      = true;     // Bypass spread in strong trends?
+      input int    ADXOverrideLevel    = 60;       // Min ADX to ignore spread
+      
+      
+//+------------------------------------------------------------------+
+//| Calculate average of an array                                    |
+//+------------------------------------------------------------------+
+double ArrayAverage(double &arr[])
+{
+   double sum = 0.0;
+   for(int i=0; i<ArraySize(arr); i++) { sum += arr[i]; Print("Spread ", i, " = ", arr[i]); }
+   return sum / ArraySize(arr);
+}
+
+//+------------------------------------------------------------------+
+//| Check if price is within 1 pip of pending order                  |
+//+------------------------------------------------------------------+
+bool IsPriceNearOrder(double orderPrice, ENUM_ORDER_TYPE type)
+{
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   return (type == ORDER_TYPE_BUY_STOP && currentAsk >= orderPrice - 10*_Point) ||
+          (type == ORDER_TYPE_SELL_STOP && currentBid <= orderPrice + 10*_Point);
+}          
+//+------------------------------------------------------------------+
+//| Spread Calculation Functions                                     |
+//+------------------------------------------------------------------+
+double GetCurrentSpread()
+{
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   return (ask - bid) / _Point; // Spread in points
+}
+
+double GetSmoothedSpread()
+{
+   if(!MQLInfoInteger(MQL_TESTER))
+   {
+      // Live market code
+      double spreads[];
+      CopyBuffer(iSpread(_Symbol, PERIOD_CURRENT, 0), 0, 0, SpreadSmoothingBars, spreads);
+      return ArrayAverage(spreads) / _Pip;
+   }
+   else
+   {
+      // Tester code
+      double currentSpread = GetCurrentSpread();
+      
+      // Store in circular buffer
+      spreadHistory[spreadCounter % SpreadSmoothingBars] = currentSpread;
+      spreadCounter++;
+      
+      Print("tester code in, current spread = ", currentSpread);
+      
+      // Return averaged value
+      return ArrayAverage(spreadHistory) / _Pip;
+   }
+}
 int OnInit()
 {
    //--- Initialize trade settings
@@ -191,6 +263,9 @@ int OnInit()
    if(TrailType==2)  handleTrailMA  =  iMA(_Symbol,Timeframe,FMAPeriod,0,MA_Mode,MA_AppPrice);
    if(TrailType==3)  handleIchimoku =  iIchimoku(_Symbol,Timeframe,9,26,52);
 
+   if(MQLInfoInteger(MQL_TESTER))
+      ArrayResize(spreadHistory, SpreadSmoothingBars);
+
    return(INIT_SUCCEEDED);
 }
 
@@ -199,6 +274,62 @@ void OnDeinit(const int reason){
 
 
 void OnTick(){
+   
+   //-- [1] Spread Control & Retry Logic --//
+   if(UseSpreadControl)
+   {
+      // Get smoothed spread (REPLACE YOUR EXISTING SPREAD CODE WITH THIS)
+      double avgSpreadPips = GetSmoothedSpread();
+      
+      // Debug output
+      static int lastPrint = 0;
+      if(GetTickCount() - lastPrint > 1000) // Print once per second
+      {
+         Print("Current Spread: ", avgSpreadPips, " pips (Max allowed: ", MaxSpreadForExec, ")");
+         lastPrint = GetTickCount();
+      }
+      
+      // Get ADX for override
+      //double adxValue = iADX(_Symbol, 0, ADX_Period, PRICE_CLOSE, 0, 0);
+      double adxBuffer[];
+      CopyBuffer(adxHandle, 0, 0, 1, adxBuffer);
+      double adxValue = adxBuffer[0];
+      bool spreadAllowed = (avgSpreadPips <= MaxSpreadForExec) || 
+                          (UseADXOverride && adxValue >= ADXOverrideLevel);
+      
+      // Check pending orders
+      for(int i=OrdersTotal()-1; i>=0; i--)
+      {
+         if(ordinfo.SelectByIndex(i) && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic)
+         {
+            if(IsPriceNearOrder(ordinfo.PriceOpen(), ordinfo.OrderType()) && !spreadAllowed)
+            {
+               // Replace the order deletion code with:
+               trade.OrderDelete(ordinfo.Ticket());
+               Print("Order ", ordinfo.Ticket(), " deleted. Spread: ", GetSmoothedSpread(), 
+                     " pips (Max: ", MaxSpreadForExec, ")");
+                     
+               if(EnableRetry) 
+               {
+                  RetryOrderBuffer(ordinfo.PriceOpen(), 
+                                  ordinfo.OrderType(), 
+                                  ordinfo.VolumeCurrent());
+               }
+               /*trade.OrderDelete(ordinfo.Ticket());
+               Print("Order ", ordinfo.Ticket(), " deleted. Spread: ", avgSpreadPips, 
+                     " pips (Max: ", MaxSpreadForExec, "), ADX: ", adxValue);
+               
+               // Retry logic (stores order details)
+               if(EnableRetry) 
+                  RetryOrderBuffer(ordinfo.PriceOpen(), ordinfo.OrderType(), ordinfo.VolumeCurrent());*/
+            }
+         }
+      }
+      
+      // Process retries (called every bar)
+      if(IsNewBar() && EnableRetry) 
+         ProcessRetries();
+   }
    
    TrailStop();
 
@@ -315,6 +446,125 @@ void OnTick(){
 
 }
 
+//+------------------------------------------------------------------+
+//| Global variables for retry system                                |
+//+------------------------------------------------------------------+
+struct PendingOrderRetry
+{
+   double      price;
+   double      volume;
+   datetime    expiryTime;
+   ENUM_ORDER_TYPE type;
+};
+PendingOrderRetry retryQueue[];
+
+void RetryOrderBuffer(double price, ENUM_ORDER_TYPE type, double volume)
+{
+   // Don't buffer if retry is disabled
+   if(!EnableRetry) return;
+   
+   // Check if this order already exists in queue
+   for(int i = 0; i < ArraySize(retryQueue); i++)
+   {
+      if(MathAbs(retryQueue[i].price - price) < _Point && retryQueue[i].type == type)
+         return; // Already exists
+   }
+   
+   // Add to queue
+   int size = ArraySize(retryQueue);
+   ArrayResize(retryQueue, size+1);
+   
+   retryQueue[size].price      = price;
+   retryQueue[size].type       = type;
+   retryQueue[size].volume       = NormalizeDouble(volume, 2);
+   retryQueue[size].expiryTime = TimeCurrent() + RetryAfterBars * PeriodSeconds(Timeframe);
+   
+   Print("Order buffered for retry. Price: ", price, 
+         " Type: ", EnumToString(type), 
+         " Volume: ", volume,
+         " Will retry until: ", TimeToString(retryQueue[size].expiryTime));
+}
+
+//+------------------------------------------------------------------+
+//| Process queued retries                                           |
+//+------------------------------------------------------------------+
+void ProcessRetries()
+{
+   // Don't process if spread control is disabled
+   if(!UseSpreadControl || !EnableRetry) return;
+
+   for(int i = ArraySize(retryQueue)-1; i >= 0; i--)
+   {
+      // Check expiry first
+      if(TimeCurrent() >= retryQueue[i].expiryTime)
+      {
+         ArrayRemove(retryQueue, i, 1);
+         continue;
+      }
+      
+      // Get current market conditions
+      double currentSpread = GetSmoothedSpread();
+      double adxValue = 0;
+      
+      if(UseADXOverride)
+      {
+         double adxBuffer[];
+         if(CopyBuffer(adxHandle, 0, 0, 1, adxBuffer) > 0)
+            adxValue = adxBuffer[0];
+      }
+      
+      // Check if conditions are good for retry
+      bool spreadOK = (currentSpread <= MaxSpreadForExec) || 
+                     (UseADXOverride && adxValue >= ADXOverrideLevel);
+      
+      if(spreadOK)
+      {
+         // Calculate price distance from current market
+         double priceDistance = 0;
+         if(retryQueue[i].type == ORDER_TYPE_BUY_STOP)
+            priceDistance = SymbolInfoDouble(_Symbol, SYMBOL_ASK) - retryQueue[i].price;
+         else
+            priceDistance = retryQueue[i].price - SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            
+         // Only retry if price hasn't moved too far
+         if(priceDistance < (OrderDistPoints * _Point))
+         {
+            if(retryQueue[i].type == ORDER_TYPE_BUY_STOP)
+            {
+               trade.BuyStop(
+                  retryQueue[i].volume,
+                  retryQueue[i].price,
+                  _Symbol,
+                  0,  // Initial SL (will be set later)
+                  0,  // Initial TP (will be set later)
+                  ORDER_TIME_GTC,
+                  0,
+                  TradeComment
+               );
+            }
+            else // SELL_STOP
+            {
+               trade.SellStop(
+                  retryQueue[i].volume,
+                  retryQueue[i].price,
+                  _Symbol,
+                  0,  // Initial SL
+                  0,  // Initial TP
+                  ORDER_TIME_GTC,
+                  0,
+                  TradeComment
+               );
+            }
+            
+            if(trade.ResultRetcode() == TRADE_RETCODE_DONE)
+               ArrayRemove(retryQueue, i, 1);
+            else
+               Print("Retry failed. Error: ", trade.ResultRetcodeDescription());
+         }
+      }
+   }
+}
+
 void CloseBuyOrders() {
 
    for(int i=OrdersTotal()-1; i>=0; i--){
@@ -374,22 +624,6 @@ double findLow(int barsToCheck){
 }
 
 
-/*double findHigh(int barsToCheck) {
-   for (int i = 0; i < GetExpirationBars; i++) {
-      if (i > barsToCheck && iHighest(_Symbol, Timeframe, MODE_HIGH, barsToCheck*2+1, i-barsToCheck) == i) 
-         return iHigh(_Symbol, Timeframe, i);
-   }
-   return -1;
-}
-
-double findLow(int barsToCheck) {
-   for (int i = 0; i < GetExpirationBars; i++) {
-      if (i > barsToCheck && iLowest(_Symbol, Timeframe, MODE_LOW, barsToCheck*2+1, i-barsToCheck) == i) 
-         return iLow(_Symbol, Timeframe, i);
-   }
-   return -1;
-}
-*/
 bool IsNewBar(){
    static datetime previousTime = 0;
    datetime currentTime = iTime(_Symbol,Timeframe,0);
@@ -566,46 +800,7 @@ void TrailStop(){
    
 }
 
-/*
-void TrailStop(){
 
-   double sl = 0;
-   double tp = 0;
-   double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   
-      for (int i=PositionsTotal()-1; i>=0; i--){
-         if(posinfo.SelectByIndex(i)){
-            ulong ticket = posinfo.Ticket();
-            
-               if(posinfo.Magic()==InpMagic && posinfo.Symbol()==_Symbol){
-               
-                  if(posinfo.PositionType()==POSITION_TYPE_BUY){
-                     if(bid-posinfo.PriceOpen()>TslTriggerPoints*_Point){
-                        tp = posinfo.TakeProfit();
-                        sl = bid - (TslPoints *_Point);
-                        
-                        if(sl > posinfo.StopLoss() && sl!=0){
-                           trade.PositionModify(ticket,sl,tp);
-                        }
-                     }
-                     
-                     
-                  }
-                  else if (posinfo.PositionType()==POSITION_TYPE_SELL){
-                     if(ask+(TslTriggerPoints*_Point)<posinfo.PriceOpen()){
-                        tp = posinfo.TakeProfit();
-                        sl = ask + (TslPoints*_Point);
-                        if(sl < posinfo.StopLoss() && sl!=0){
-                           trade.PositionModify(ticket,sl,tp);
-                        }
-                     }
-                  }
-         }
-      }         
-   }
-}
-*/
 bool IsUpcomingNews(){
 
    if(NewsFilterOn==false) return(false);
