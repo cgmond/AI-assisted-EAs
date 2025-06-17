@@ -1,4 +1,4 @@
-//version 1.21 (Spread buffer/retry logic 6/17/2025)
+//version 1.22 (Spread buffer OK /retry logic not OK 6/17/2025)
 #property copyright "Copyright 2025, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
 #property version   "1.00"
@@ -172,7 +172,7 @@ COrderInfo        ordinfo;
 double ArrayAverage(double &arr[])
 {
    double sum = 0.0;
-   for(int i=0; i<ArraySize(arr); i++) { sum += arr[i]; Print("Spread ", i, " = ", arr[i]); }
+   for(int i=0; i<ArraySize(arr); i++) sum += arr[i]; 
    return sum / ArraySize(arr);
 }
 
@@ -204,7 +204,8 @@ double GetSmoothedSpread()
       // Live market code
       double spreads[];
       CopyBuffer(iSpread(_Symbol, PERIOD_CURRENT, 0), 0, 0, SpreadSmoothingBars, spreads);
-      return ArrayAverage(spreads) / _Pip;
+      Print("live code in - Average Spread: ", ArrayAverage(spreads));
+      return ArrayAverage(spreads);
    }
    else
    {
@@ -215,10 +216,10 @@ double GetSmoothedSpread()
       spreadHistory[spreadCounter % SpreadSmoothingBars] = currentSpread;
       spreadCounter++;
       
-      Print("tester code in, current spread = ", currentSpread);
+      Print("tester code in, Average Spread: ", ArrayAverage(spreadHistory));
       
       // Return averaged value
-      return ArrayAverage(spreadHistory) / _Pip;
+      return ArrayAverage(spreadHistory);
    }
 }
 int OnInit()
@@ -280,9 +281,8 @@ void OnTick(){
    {
       // Get smoothed spread (REPLACE YOUR EXISTING SPREAD CODE WITH THIS)
       double avgSpreadPips = GetSmoothedSpread();
-      
       // Debug output
-      static int lastPrint = 0;
+      static ulong lastPrint = 0;
       if(GetTickCount() - lastPrint > 1000) // Print once per second
       {
          Print("Current Spread: ", avgSpreadPips, " pips (Max allowed: ", MaxSpreadForExec, ")");
@@ -315,13 +315,6 @@ void OnTick(){
                                   ordinfo.OrderType(), 
                                   ordinfo.VolumeCurrent());
                }
-               /*trade.OrderDelete(ordinfo.Ticket());
-               Print("Order ", ordinfo.Ticket(), " deleted. Spread: ", avgSpreadPips, 
-                     " pips (Max: ", MaxSpreadForExec, "), ADX: ", adxValue);
-               
-               // Retry logic (stores order details)
-               if(EnableRetry) 
-                  RetryOrderBuffer(ordinfo.PriceOpen(), ordinfo.OrderType(), ordinfo.VolumeCurrent());*/
             }
          }
       }
