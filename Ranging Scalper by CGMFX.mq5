@@ -1,4 +1,4 @@
-//version 1.22 (Spread buffer OK /retry logic not OK 6/17/2025)
+//version 1.23 (Spread buffer OK /retry logic maybe OK 6/17/2025)
 #property copyright "Copyright 2025, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
 #property version   "1.00"
@@ -18,7 +18,8 @@ COrderInfo        ordinfo;
       // Add these with your other global variables:
       double spreadHistory[];
       int spreadCounter = 0;
-
+      // Add with your other indicator handles:
+      int atrHandle = iATR(_Symbol,0,14);
 
    input group "=== Trading Profiles ==="
    
@@ -67,6 +68,8 @@ COrderInfo        ordinfo;
       input TSLType           TrailType               =  0;          //Type of Trailing Stoploss
       input int               PrvCandleN              =  1;          //No of candles to trail SL (if selected)
       input int               FMAPeriod               =  5;          //Fast-moving avg period to trail on (if selected)
+      input ENUM_MA_METHOD       MA_Mode           =     MODE_EMA;      //Moving average mode/method
+      input ENUM_APPLIED_PRICE   MA_AppPrice       =     PRICE_MEDIAN;  //Moving Avg Applied price 
 
    input group "=== Crypto Related Input === (effective only under Bitcoin Profile)"
    
@@ -89,45 +92,13 @@ COrderInfo        ordinfo;
       input double TSLasPctofTPIndices = 5;   // Trail SL as % of TP
       input double TSLTgrasPctofTPIndices = 7; //Trigger of Trail SL % of TP 
 
-   input group "=== News Filter ==="
-      input bool           NewsFilterOn   =     false;    // Filter for News?
-      enum sep_dropdown{comma=0, semicolon=1};
-      input sep_dropdown   separator      =     0;          // Separator to separate news keywords
-      input string         KeyNews        =     "BCB,NFP,JOLTS,Nonfarm,PMI,Reatil,GBDP,Confidence,Interest Rate"; //Keywords in News to avoid (separated by separator)
-      input string         NewsCurrencies =     "USD,GBP,EUR,JPY"; //Currencies for News LookUp
-      input int            DaysNewsLookup =     100; //No of days to look up news
-      input int            StopBeforeMin  =     15; //Stop Trading before (in minutes)
-      input int            StartTradingMin=     15; //Start trading after (in minutes)
-            bool           TrDisabledNews =     false; //variable to store if trading disabled due to news
-            
-      ushort   sep_code;
-      string   Newstoavoid[];
-      datetime LastNewsAvoided;
-      
-   input group "=== RSI filter ==="
-   
-      input bool                 RSIFilterOn       =     false;         //Filter for RSI extremes?
-      input ENUM_TIMEFRAMES      RSITimeframe      =     PERIOD_H1;     //Timeframe for RSI filter
-      input int                  RSIlowerlvl       =     20;            //RSI lower level to filter
-      input int                  RSIupperlvl       =     80;            //RSI upper level to filter
-      input int                  RSI_MA            =     14;            //RSI Period
-      input ENUM_APPLIED_PRICE   RSI_AppPrice      =     PRICE_MEDIAN;  //RSI Applied Price
-      
-   input group "=== Moving Average Filter ==="
-   
-      input bool                 MAFilterOn        =     false;         //Filter for Moving Average extremes?
-      input ENUM_TIMEFRAMES      MATimeframe       =     PERIOD_H4;     //Timeframe for Moving Average filter
-      input int                  PctPricefromMA    =     3;             //% Price is away from MovAvg to be extreme
-      input int                  MA_Period         =     200;           //Moving Average period
-      input ENUM_MA_METHOD       MA_Mode           =     MODE_EMA;      //Moving average mode/method
-      input ENUM_APPLIED_PRICE   MA_AppPrice       =     PRICE_MEDIAN;  //Moving Avg Applied price 
-
 
       input group "=== ADX Filter ==="
       
       // ADX Settings
       input bool                 UseADXFilter      =     false;        // Enable ADX Strength Filter?
-      input int                  ADX_Period        =     14;          
+      input ENUM_TIMEFRAMES      ADX_Timeframe     =     1;            // ADX Timeframe
+      input int                  ADX_Period        =     14;           // ADX Period
       input int                  ADX_Weak          =     25;            
       input int                  ADX_Medium        =     50;          
       input int                  ADX_Strong        =     75;          
@@ -164,7 +135,15 @@ COrderInfo        ordinfo;
       
       input bool   UseADXOverride      = true;     // Bypass spread in strong trends?
       input int    ADXOverrideLevel    = 60;       // Min ADX to ignore spread
-      
+
+      // Add this right after your existing input groups (around line 50)
+      input group "=== Ranging Scalper Settings ==="
+      input double SellLimitDistancePct = 0.1;  // % from high to place sell limit
+      input double BuyLimitDistancePct = 0.1;   // % from low to place buy limit
+      input int MinADXForRange = 25;            // Max ADX value to consider market ranging
+      input int RangeConfirmationBars = 5;      // Bars to confirm range
+      input bool UseATRForDistance = true;      // Use ATR for dynamic distance
+      input double ATRMultiplier = 0.5;         // ATR multiplier for distance      
       
 //+------------------------------------------------------------------+
 //| Calculate average of an array                                    |
@@ -184,8 +163,8 @@ bool IsPriceNearOrder(double orderPrice, ENUM_ORDER_TYPE type)
    double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
-   return (type == ORDER_TYPE_BUY_STOP && currentAsk >= orderPrice - 10*_Point) ||
-          (type == ORDER_TYPE_SELL_STOP && currentBid <= orderPrice + 10*_Point);
+   return (type == ORDER_TYPE_BUY_STOP && currentAsk >= orderPrice - 20*_Point) ||
+          (type == ORDER_TYPE_SELL_STOP && currentBid <= orderPrice + 20*_Point);
 }          
 //+------------------------------------------------------------------+
 //| Spread Calculation Functions                                     |
@@ -252,9 +231,8 @@ int OnInit()
    //--- Indicator visibility
    if (HideIndicators==true) TesterHideIndicators(true);
    
-   if (RSIFilterOn==true) { handleRSI = iRSI(_Symbol,RSITimeframe,RSI_MA,RSI_AppPrice); ChartIndicatorAdd(0, 1, handleRSI); }
    
-   if (UseADXFilter==true) { adxHandle = iADX(_Symbol, Timeframe, ADX_Period);    ChartIndicatorAdd(0, 1, adxHandle); }
+   if (UseADXFilter==true) { adxHandle = iADX(_Symbol, ADX_Timeframe, ADX_Period);    ChartIndicatorAdd(0, 1, adxHandle); }
 
    if (UseMACrossover==true) {  
       fastMAHandle = iMA(_Symbol, Timeframe, FastMA_Period, 0, MA_Method, FastMA_AppPrice);
@@ -275,27 +253,17 @@ void OnDeinit(const int reason){
 
 
 void OnTick(){
+
+   TrailStop();
+ 
+   if(!IsNewBar()) return;
    
-   //-- [1] Spread Control & Retry Logic --//
-   if(UseSpreadControl)
-   {
-      // Get smoothed spread (REPLACE YOUR EXISTING SPREAD CODE WITH THIS)
+      if(UseSpreadControl){
       double avgSpreadPips = GetSmoothedSpread();
-      // Debug output
-      static ulong lastPrint = 0;
-      if(GetTickCount() - lastPrint > 1000) // Print once per second
-      {
-         Print("Current Spread: ", avgSpreadPips, " pips (Max allowed: ", MaxSpreadForExec, ")");
-         lastPrint = GetTickCount();
-      }
-      
-      // Get ADX for override
-      //double adxValue = iADX(_Symbol, 0, ADX_Period, PRICE_CLOSE, 0, 0);
       double adxBuffer[];
       CopyBuffer(adxHandle, 0, 0, 1, adxBuffer);
       double adxValue = adxBuffer[0];
-      bool spreadAllowed = (avgSpreadPips <= MaxSpreadForExec) || 
-                          (UseADXOverride && adxValue >= ADXOverrideLevel);
+      bool spreadAllowed = (avgSpreadPips <= MaxSpreadForExec) || (UseADXOverride && adxValue >= ADXOverrideLevel);
       
       // Check pending orders
       for(int i=OrdersTotal()-1; i>=0; i--)
@@ -310,7 +278,9 @@ void OnTick(){
                      " pips (Max: ", MaxSpreadForExec, ")");
                      
                if(EnableRetry) 
-               {  Print("Retry order buffer.");
+               {  
+                  Print("Retry order buffer.");
+                  ordinfo.SelectByIndex(i); // Ensure we have the correct order selected
                   RetryOrderBuffer(ordinfo.PriceOpen(), 
                                   ordinfo.OrderType(), 
                                   ordinfo.VolumeCurrent());
@@ -320,30 +290,14 @@ void OnTick(){
       }
       
       // Process retries (called every bar)
-      if(IsNewBar() && EnableRetry) 
+      
+      if(EnableRetry) 
          {//Print("Calling process retries function."); 
          ProcessRetries();}
-      else return;   
+
+        
    }
-   
-//   TrailStop();
-   
-   if(IsRSIFilter() || IsUpcomingNews() || IsMAFilter()){ Print("RSI, News, MA filter passed");
-      CloseAllOrders();;
-      Tradingenabled=false;
-      //ChartSetInteger(0,CHART_COLOR_BACKGROUND,ChartColorTradingOff);
-      if(TradingEnabledComm!="Printed")
-         Print(TradingEnabledComm);
-      TradingEnabledComm="Printed";
-      return;   
-   }
-   
-   Tradingenabled=true;
-   if(TradingEnabledComm!=""){
-      Print("Trading is enabled again.");
-      TradingEnabledComm = "";
-   }
-   
+  
    //ChartSetInteger(0,CHART_COLOR_BACKGROUND,ChartColorTradingOn);
    //Print("This is after trading enabled comm IF");
    
@@ -404,17 +358,17 @@ void OnTick(){
    
    int dynamicBarsN = GetDynamicBarsN();
    
-   if (SellTotal <= 0 && IsBearishCrossover()) {
-      double high = findHigh(dynamicBarsN);
-      if (high > 0) SendSellOrder(high);
-      Print("Previous sellbarcounter: ", sellbarcounter, "  Resetting to 0.\n");
-      sellbarcounter=0;
-   }
-   if (BuyTotal <= 0 && IsBearishCrossover()) {
+   // CHANGE this section in OnTick():
+   if (BuyTotal <= 0 && IsMarketRanging() && IsBullishCrossover()) {
       double low = findLow(dynamicBarsN);
       if (low > 0) SendBuyOrder(low);
-      Print("Previous buybarcounter: ", buybarcounter, "  Resetting to 0.\n");
       buybarcounter=0;
+   }
+   
+   if (SellTotal <= 0 && IsMarketRanging() && IsBearishCrossover()) {
+      double high = findHigh(dynamicBarsN);
+      if (high > 0) SendSellOrder(high);
+      sellbarcounter=0;
    }   
    
    if (BuyTotal>=1) buybarcounter++;
@@ -444,6 +398,31 @@ void OnTick(){
 
 }
 
+// Add these NEW functions with your other utility functions:
+
+bool IsMarketRanging() {
+   if(!UseADXFilter) return true;
+   
+   double adxValue[1];
+   CopyBuffer(adxHandle, 0, 0, 1, adxValue);
+   
+   if(adxValue[0] > MinADXForRange) return false;
+   
+   // Range confirmation logic
+   double rangeHigh = iHigh(_Symbol,Timeframe,iHighest(_Symbol,Timeframe,MODE_HIGH,RangeConfirmationBars,0));
+   double rangeLow = iLow(_Symbol,Timeframe,iLowest(_Symbol,Timeframe,MODE_LOW,RangeConfirmationBars,0));
+   double rangeSize = (rangeHigh-rangeLow)/_Point;
+   
+   return (rangeSize >= 20 && rangeSize <= 200); 
+}
+
+double GetOrderDistance(double price) {
+   if(!UseATRForDistance) return price * (BuyLimitDistancePct/100);
+   
+   double atr[];
+   CopyBuffer(iATR(_Symbol,0,14), 0, 0, 1, atr);
+   return atr[0] * ATRMultiplier;
+}
 //+------------------------------------------------------------------+
 //| Global variables for retry system                                |
 //+------------------------------------------------------------------+
@@ -453,6 +432,8 @@ struct PendingOrderRetry
    double      volume;
    datetime    expiryTime;
    ENUM_ORDER_TYPE type;
+   double      sl;
+   double      tp;
 };
 PendingOrderRetry retryQueue[];
 
@@ -460,6 +441,10 @@ void RetryOrderBuffer(double price, ENUM_ORDER_TYPE type, double volume)
 {
    // Don't buffer if retry is disabled
    if(!EnableRetry) return;
+   
+      // Get the original SL/TP from the order
+   double sl = ordinfo.StopLoss();
+   double tp = ordinfo.TakeProfit();
    
    // Check if this order already exists in queue
    for(int i = 0; i < ArraySize(retryQueue); i++)
@@ -474,12 +459,16 @@ void RetryOrderBuffer(double price, ENUM_ORDER_TYPE type, double volume)
    
    retryQueue[size].price      = price;
    retryQueue[size].type       = type;
-   retryQueue[size].volume       = NormalizeDouble(volume, 2);
+   retryQueue[size].volume     = NormalizeDouble(volume, 2);
+   retryQueue[size].sl         = sl;
+   retryQueue[size].tp         = tp;
    retryQueue[size].expiryTime = TimeCurrent() + RetryAfterBars * PeriodSeconds(Timeframe);
    
    Print("Order buffered for retry. Price: ", price, 
          " Type: ", EnumToString(type), 
          " Volume: ", volume,
+         " SL: ", sl,
+         " TP: ", tp,
          " Will retry until: ", TimeToString(retryQueue[size].expiryTime));
 }
 
@@ -533,8 +522,8 @@ void ProcessRetries()
                   retryQueue[i].volume,
                   retryQueue[i].price,
                   _Symbol,
-                  0,  // Initial SL (will be set later)
-                  0,  // Initial TP (will be set later)
+                  retryQueue[i].sl,  // Use stored SL
+                  retryQueue[i].tp,  // Use stored TP
                   ORDER_TIME_GTC,
                   0,
                   TradeComment
@@ -546,8 +535,8 @@ void ProcessRetries()
                   retryQueue[i].volume,
                   retryQueue[i].price,
                   _Symbol,
-                  0,  // Initial SL
-                  0,  // Initial TP
+                  retryQueue[i].sl,  // Use stored SL
+                  retryQueue[i].tp,  // Use stored TP
                   ORDER_TIME_GTC,
                   0,
                   TradeComment
@@ -635,23 +624,6 @@ bool IsNewBar(){
    return false;
 }
 
-void SendBuyOrder(double entry){
-
-   double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   
-   if(ask > entry - OrderDistPoints * _Point) return;
-   
-   double tp = entry + Tppoints * _Point;
-   double sl = entry - Slpoints * _Point;
-   
-   double lots = 0.01;
-   if(RiskPercent > 0) lots = calcLots(entry-sl);
-
-   datetime expiration = iTime(_Symbol,Timeframe,0) + GetExpirationBars() * PeriodSeconds(Timeframe);
-   
-      trade.BuyStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0);
-      Print("Buy Order Expiration: ", expiration);
-}
 
 int GetExpirationBars() {
    
@@ -665,25 +637,45 @@ int GetExpirationBars() {
    
 
 }
-void SendSellOrder(double entry){
+// Completely REPLACE your current SendBuyOrder/SendSellOrder with these:
 
-   double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   if(bid < entry + OrderDistPoints * _Point) return;
+void SendBuyOrder(double lowPrice) {
+   double distance = UseATRForDistance ? 
+                    GetOrderDistance(lowPrice) : 
+                    lowPrice * (BuyLimitDistancePct/100);
    
-   double tp = entry - Tppoints * _Point;
+   double entry = lowPrice + distance;
+   double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
    
-   double sl = entry + Slpoints * _Point;
+   if(ask <= entry) return; // Only place if price is above entry
    
-   double lots = 0.01;
-   if(RiskPercent > 0) lots = calcLots(sl-entry);
+   double tp = entry + Tppoints * _Point;
+   double sl = entry - Slpoints * _Point;
+   double lots = calcLots(entry-sl);
    
-   datetime expiration = iTime(_Symbol,Timeframe,0) + GetExpirationBars() * PeriodSeconds(Timeframe);
-   
-      trade.SellStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0);
-      Print("Sell Order Expiration: ", expiration);
-
+   trade.BuyLimit(lots, NormalizeDouble(entry,_Digits), _Symbol, 
+                 NormalizeDouble(sl,_Digits), NormalizeDouble(tp,_Digits), 
+                 ORDER_TIME_GTC, 0, TradeComment);
 }
 
+void SendSellOrder(double highPrice) {
+   double distance = UseATRForDistance ? 
+                    GetOrderDistance(highPrice) : 
+                    highPrice * (SellLimitDistancePct/100);
+   
+   double entry = highPrice - distance;
+   double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   
+   if(bid >= entry) return; // Only place if price is below entry
+   
+   double tp = entry - Tppoints * _Point;
+   double sl = entry + Slpoints * _Point;
+   double lots = calcLots(sl-entry);
+   
+   trade.SellLimit(lots, NormalizeDouble(entry,_Digits), _Symbol, 
+                  NormalizeDouble(sl,_Digits), NormalizeDouble(tp,_Digits), 
+                  ORDER_TIME_GTC, 0, TradeComment);
+}
 
 double calcLots(double slPoints){
    double risk = AccountInfoDouble(ACCOUNT_BALANCE) * RiskPercent / 100;
@@ -748,7 +740,8 @@ void TrailStop(){
                      case 0:  sl = bid - (TslPoints * _Point);
                               break;
                      
-                     case 1:  sl = iLow(_Symbol,Timeframe,PrvCandleN);
+                     case 1:  sl = iLow(_Symbol,Timeframe,PrvCandleN); 
+                              Print("iLow: ", sl);
                               break;
                               
                      case 2:  CopyBuffer(handleTrailMA,MAIN_LINE,1,1,indbuffer);
@@ -778,7 +771,8 @@ void TrailStop(){
                      case 0:  sl = ask + (TslPoints * _Point);
                               break;
                      
-                     case 1:  sl = iHigh(_Symbol,Timeframe,PrvCandleN);
+                     case 1:  sl = iHigh(_Symbol,Timeframe,PrvCandleN); 
+                              Print("iHigh: ", sl);
                               break;
                               
                      case 2:  CopyBuffer(handleTrailMA,MAIN_LINE,1,1,indbuffer);
@@ -802,105 +796,8 @@ void TrailStop(){
 }
 
 
-bool IsUpcomingNews(){
-
-   if(NewsFilterOn==false) return(false);
-   
-   if(TrDisabledNews && TimeCurrent()-LastNewsAvoided < StartTradingMin*PeriodSeconds(PERIOD_M1)) return true;
-   
-   TrDisabledNews=false;
-   
-   string sep;
-   switch(separator){
-     case 0: sep = ","; break;
-     case 1: sep = ";"; 
-   }
-   
-   sep_code = StringGetCharacter(sep,0);
-   
-   int k = StringSplit(KeyNews,sep_code,Newstoavoid);
-   
-   MqlCalendarValue values[];
-   datetime starttime   = TimeCurrent(); //iTime(_Symbol,PERIOD_D1,0);
-   datetime endtime     = starttime + PeriodSeconds(PERIOD_D1) * DaysNewsLookup;
-   
-   CalendarValueHistory(values,starttime,endtime,NULL,NULL);
-   
-   for(int i=0; i < ArraySize(values); i++){
-      MqlCalendarEvent event;
-      CalendarEventById(values[i].event_id, event);
-      MqlCalendarCountry country;
-      CalendarCountryById(event.country_id,country);
-      
-      if(StringFind(NewsCurrencies,country.currency) < 0) continue;
-      
-         for(int j=0; j<k; j++){
-            string currentevent = Newstoavoid[j];
-            string currentnews = event.name;
-            if(StringFind(currentnews,currentevent) < 0) continue;
-            
-            Comment("Next News: ", country.currency, ": ", event.name, " -> ", values[i].time);
-            if(values[i].time - TimeCurrent() < StopBeforeMin*PeriodSeconds(PERIOD_M1)){
-               LastNewsAvoided = values[i].time;
-               TrDisabledNews = true;
-               if(TradingEnabledComm=="" || TradingEnabledComm!="Printed"){
-                  TradingEnabledComm = "Trading is disabled due to upcoming news: " + event.name;
-               }
-               return true;
-            }
-            return false;
-         }
-         
-   }
-   return false; 
- }
- 
- bool IsRSIFilter(){
- 
-   if(RSIFilterOn==false)  return(false);
-   
-   double RSI[];
-   
-   CopyBuffer(handleRSI,MAIN_LINE,0,1,RSI);
-   ArraySetAsSeries(RSI,true);
-   
-   double RSInow  = RSI[0];
-   
-   //Comment("RSI = ", RSInow);
-   
-   if(RSInow>RSIupperlvl || RSInow<RSIlowerlvl){
-      if(TradingEnabledComm=="" || TradingEnabledComm!="Printed"){
-         TradingEnabledComm = "Trading is disabled due to RSI filter";
-      }
-      return(true);
-   }
-   return false;
- }
  
  
- bool IsMAFilter(){
- 
-   if(MAFilterOn==false)   return(false);
-   
-   double MovAvg[];
-   
-   CopyBuffer(handleMovAvg,MAIN_LINE,0,1,MovAvg);
-   ArraySetAsSeries(MovAvg,true);
-   
-   double MAnow   =  MovAvg[0];
-   double ask     =  SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   
-   if (   ask > MAnow * (1 + PctPricefromMA/100) ||
-         ask < MAnow * (1 - PctPricefromMA/100)
-      ){
-         if(TradingEnabledComm=="" || TradingEnabledComm!="Printed"){
-            TradingEnabledComm = "Trading is disabled due to Mov Avg Filter";
-         }
-         return true;
-      }
-      return false;            
-       
- }
 
 int GetDynamicBarsN()
 {
