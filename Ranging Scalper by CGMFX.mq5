@@ -264,6 +264,8 @@ void OnTick(){
       CopyBuffer(adxHandle, 0, 0, 1, adxBuffer);
       double adxValue = adxBuffer[0];
       bool spreadAllowed = (avgSpreadPips <= MaxSpreadForExec) || (UseADXOverride && adxValue >= ADXOverrideLevel);
+      Print("No. of orders: ", OrdersTotal());
+      
       
       // Check pending orders
       for(int i=OrdersTotal()-1; i>=0; i--)
@@ -298,13 +300,6 @@ void OnTick(){
         
    }
   
-   //ChartSetInteger(0,CHART_COLOR_BACKGROUND,ChartColorTradingOn);
-   //Print("This is after trading enabled comm IF");
-   
-//   if(!IsNewBar()) {Print("Is not new bar?? Why??"); return;}
-   
-      //Print("New bar? Yes.");
-
    MqlDateTime time;
    TimeToStruct(TimeCurrent(),time);
    
@@ -352,11 +347,13 @@ void OnTick(){
    
    for(int i=OrdersTotal()-1; i>=0; i--){
       ordinfo.SelectByIndex(i);
-      if(ordinfo.OrderType()==ORDER_TYPE_BUY_STOP && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic) BuyTotal++;
-      if(ordinfo.OrderType()==ORDER_TYPE_SELL_STOP && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic) SellTotal++;
+      if(ordinfo.OrderType()==ORDER_TYPE_BUY_LIMIT && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic) BuyTotal++;
+      if(ordinfo.OrderType()==ORDER_TYPE_SELL_LIMIT && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic) SellTotal++;
    }
    
    int dynamicBarsN = GetDynamicBarsN();
+   
+   Print("Buy total: ", BuyTotal,  "\nSell total: ,", SellTotal);
    
    // CHANGE this section in OnTick():
    if (BuyTotal <= 0 && IsMarketRanging() && IsBullishCrossover()) {
@@ -617,7 +614,7 @@ bool IsNewBar(){
    datetime currentTime = iTime(_Symbol,Timeframe,0);
    //Print("Inside isnewbar function. Symbol: ", _Symbol, " Timeframe: ", Timeframe);
    if (previousTime!=currentTime){ 
-      //Print("It should be new bar!!!");
+      Print("It should be new bar!!!");
       previousTime=currentTime;
       return true;
    }
