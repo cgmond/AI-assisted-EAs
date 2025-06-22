@@ -379,8 +379,8 @@ void OnTick(){
        adxValue[0] > ADX_Medium ? "Strong" :
        adxValue[0] > ADX_Weak ? "Medium" : "Weak"), ")\n",
       "BarsN: ", GetDynamicBarsN(), "\n",
-      "FastMA: ", DoubleToString(iMA(_Symbol,0,FastMA_Period,0,MA_Method,FastMA_AppPrice), _Digits), "\n",
-      "SlowMA: ", DoubleToString(iMA(_Symbol,0,SlowMA_Period,0,MA_Method,SlowMA_AppPrice), _Digits), "\n",
+      //"FastMA: ", DoubleToString(iMA(_Symbol,0,FastMA_Period,0,MA_Method,FastMA_AppPrice), _Digits), "\n",
+      //"SlowMA: ", DoubleToString(iMA(_Symbol,0,SlowMA_Period,0,MA_Method,SlowMA_AppPrice), _Digits), "\n",
       "Crossover: ", IsBullishCrossover() ? "Bullish" : (IsBearishCrossover() ? "Bearish" : "Neutral"),
       "\nExpiration Bars: ", GetExpirationBars(), "\n",
       "Bars count since last BUY order: ", buybarcounter, 
