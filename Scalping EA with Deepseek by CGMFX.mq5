@@ -250,6 +250,7 @@ void OnTick(){
    if(!IsNewBar()) return;
    
       if(UseSpreadControl){
+      Print("Entering usepreadcontrolif?");
       double avgSpreadPips = GetSmoothedSpread();
       double adxBuffer[];
       CopyBuffer(adxHandle, 0, 0, 1, adxBuffer);
@@ -258,7 +259,8 @@ void OnTick(){
       
       // Check pending orders
       for(int i=OrdersTotal()-1; i>=0; i--)
-      {
+      {      Print("Entering for check pending orders");
+
          if(ordinfo.SelectByIndex(i) && ordinfo.Symbol()==_Symbol && ordinfo.Magic()==InpMagic)
          {  Print("Checking magic number: ", InpMagic);
             if(IsPriceNearOrder(ordinfo.PriceOpen(), ordinfo.OrderType()) && !spreadAllowed)
@@ -283,19 +285,12 @@ void OnTick(){
       // Process retries (called every bar)
       
       if(EnableRetry) 
-         {//Print("Calling process retries function."); 
+         {Print("Calling process retries function."); 
          ProcessRetries();}
 
         
    }
   
-   //ChartSetInteger(0,CHART_COLOR_BACKGROUND,ChartColorTradingOn);
-   //Print("This is after trading enabled comm IF");
-   
-//   if(!IsNewBar()) {Print("Is not new bar?? Why??"); return;}
-   
-      //Print("New bar? Yes.");
-
    MqlDateTime time;
    TimeToStruct(TimeCurrent(),time);
    
@@ -351,12 +346,14 @@ void OnTick(){
    
    if (BuyTotal <= 0 && IsBullishCrossover()) {
       double high = findHigh(dynamicBarsN);
+      Print("Just went to find highs.\nHigh: ",high);
       if (high > 0) SendBuyOrder(high);
       Print("Previous buybarcounter: ", buybarcounter, "  Resetting to 0.\n");
       buybarcounter=0;
    }
    if (SellTotal <= 0 && IsBearishCrossover()) {
       double low = findLow(dynamicBarsN);
+      Print("Just went to find lows.\nLow: ",low);
       if (low > 0) SendSellOrder(low);
       Print("Previous sellbarcounter: ", sellbarcounter, "  Resetting to 0.\n");
       sellbarcounter=0;
@@ -379,8 +376,6 @@ void OnTick(){
        adxValue[0] > ADX_Medium ? "Strong" :
        adxValue[0] > ADX_Weak ? "Medium" : "Weak"), ")\n",
       "BarsN: ", GetDynamicBarsN(), "\n",
-      //"FastMA: ", DoubleToString(iMA(_Symbol,0,FastMA_Period,0,MA_Method,FastMA_AppPrice), _Digits), "\n",
-      //"SlowMA: ", DoubleToString(iMA(_Symbol,0,SlowMA_Period,0,MA_Method,SlowMA_AppPrice), _Digits), "\n",
       "Crossover: ", IsBullishCrossover() ? "Bullish" : (IsBearishCrossover() ? "Bearish" : "Neutral"),
       "\nExpiration Bars: ", GetExpirationBars(), "\n",
       "Bars count since last BUY order: ", buybarcounter, 
@@ -549,26 +544,33 @@ void CloseSellOrders() {
 }
 
 double findHigh(int barsToCheck){
+   Print("barstocheck: ", barsToCheck);
    double highestHigh = 0;
       for(int i = 0; i < 200; i++){
          double high = iHigh(_Symbol,Timeframe,i);
          if(i > barsToCheck && iHighest(_Symbol,Timeframe,MODE_HIGH,barsToCheck*2+1,i-barsToCheck) == i){
+         Print("high = ", high, "         highesthigh = ", highestHigh);
            if(high > highestHigh){
+              Print("Just returned high = ", high);
               return   high;
            }
          }
          highestHigh = MathMax(high,highestHigh);
+         
    }
    return -1;
 }
 
 double findLow(int barsToCheck){
+   Print("barstocheck: ", barsToCheck);
    double lowestLow = DBL_MAX;
    for (int i = 0; i < 200; i++){
       double low = iLow(_Symbol,Timeframe,i);
       if(i > barsToCheck && iLowest(_Symbol,Timeframe,MODE_LOW,barsToCheck*2+1,i-barsToCheck) == i){
+         Print("low = ", low, "         lowestlow = ", lowestLow);
          if(low < lowestLow){
-            return low;
+           Print("Just returned low = ", low);
+           return low;
          }
       }
       lowestLow = MathMin(low,lowestLow);
@@ -766,7 +768,7 @@ int GetDynamicBarsN()
 {
    if(!UseADXFilter) 
    {
-      Print("DEBUG | Using default BarsN: ", BarsN);
+      Print("Using default BarsN: ", BarsN);
       return BarsN;
    }
    
