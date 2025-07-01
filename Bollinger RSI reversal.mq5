@@ -8,23 +8,23 @@
    COrderInfo     ordinfo;
 
 #include <Indicators\Trend.mqh>
-   CiBands           *Bollinger = NULL;
-   CiBands           *TPBol = NULL;
-   CiIchimoku        *Ichimoku = NULL;
-   CiMA              *MovAvgFast = NULL , *MovAvgSlow = NULL;
+   CiBands           Bollinger;
+   CiBands           TPBol;
+   CiIchimoku        Ichimoku;
+   CiMA              MovAvgFast, MovAvgSlow;
    
    
 #include <Indicators\Oscilators.mqh>
-   CiRSI             *RSI = NULL;
+   CiRSI             RSI;
    
    enum     LotTyp      {Lot_per_1k_Capital=0, Fixed_Lot_Size=1};
    enum     IcTypes     {Price_above_Cloud=0, Price_above_Ten=1, Price_above_Kij=2, Price_above_SenA=3, Price_above_SenB=4, Ten_above_Kij=5, Ten_above_Kij_above_Cloud=6, Ten_above_Cloud=7, Kij_above_Cloud=8};
  
-   string            TradeComment      =  "Bollinger RSI"; // Trade Comments 
       
 input group "===   EA specific variables   ==="
 
    input    ulong             InpMagic          =  23948;            // EA Unique ID (Magic No)
+   input    string            TradeComment      =  "BRSI reversal";  //Trade Comments
    input    string            Curren            =  "USDJPY,GBPUSD";  // Currencies for the EA
    input    ENUM_TIMEFRAMES   Timeframe         =  PERIOD_H1;        // Timeframe for the EA (trading)
    
@@ -67,50 +67,29 @@ input group "===   Ichimoku Filter   ==="
       
       
 int OnInit() {
+
    trade.SetExpertMagicNumber(InpMagic);
    ChartSetInteger(0,CHART_SHOW_GRID,false);
 
-   int sep_code = StringGetCharacter(sep,0);
-   int k = StringSplit(Curren,sep_code,Currencies);
+   int sep_code   =  StringGetCharacter(sep,0);
+   int k          =  StringSplit(Curren,sep_code,Currencies);
    
    ArrayResize(BarsTraded,k);
    for(int i=k-1; i>=0; i--) {
-      BarsTraded[i][0] = Currencies[i];
-      BarsTraded[i][1] = IntegerToString(i);
+      BarsTraded[i][0]  =  Currencies[i];
+      BarsTraded[i][1]  =  IntegerToString(i);
    }
+   ArrayPrint(BarsTraded);
 
-   // Initialize indicators for first symbol only (they'll work for all symbols)
-   string main_symbol = Currencies[0];
-   
-   Bollinger = new CiBands;
-   if(!Bollinger.Create(main_symbol,Timeframe,BollingerMAperiod,0,BollingerStDev,AppPrice)) {
-      Print("Failed to create Bollinger Bands");
-      return INIT_FAILED;
-   }
-   
-   RSI = new CiRSI;
-   if(!RSI.Create(main_symbol,Timeframe,RSIPeriod,AppPrice)) {
-      Print("Failed to create RSI");
-      return INIT_FAILED;
-   }
-   
-   TPBol = new CiBands;
-   if(!TPBol.Create(main_symbol,Timeframe,BollingerMAperiod,0,TPBolStDev,AppPrice)) {
-      Print("Failed to create TPBol");
-      return INIT_FAILED;
-   }
-
-   return INIT_SUCCEEDED;
+   return(INIT_SUCCEEDED);
 }
+
 
 void OnDeinit(const int reason) {
-   if(CheckPointer(Bollinger) == POINTER_DYNAMIC) delete Bollinger;
-   if(CheckPointer(TPBol) == POINTER_DYNAMIC) delete TPBol;
-   if(CheckPointer(RSI) == POINTER_DYNAMIC) delete RSI;
-   if(CheckPointer(Ichimoku) == POINTER_DYNAMIC) delete Ichimoku;
-   if(CheckPointer(MovAvgFast) == POINTER_DYNAMIC) delete MovAvgFast;
-   if(CheckPointer(MovAvgSlow) == POINTER_DYNAMIC) delete MovAvgSlow;
+
+
 }
+
 
 void OnTick() {
 
@@ -126,6 +105,10 @@ void RunSymbols(string symbol) {
    
    TrailSL(symbol);
    
+   Bollinger         =  new CiBands;
+   Bollinger.Create(symbol,Timeframe,BollingerMAperiod,0,BollingerStDev,AppPrice);
+   RSI               =  new CiRSI;
+   RSI.Create(symbol,Timeframe,RSIPeriod,AppPrice);
    RSI.Refresh(-1);
    Bollinger.Refresh(-1);
    
@@ -178,7 +161,7 @@ void RunSymbols(string symbol) {
          if(IchiFilterOn && PricevsIchiCloud(symbol,SenA,SenB,Ten,Kij)!="above") return;
          
          double   tp    =  Bollinger.Upper(0);
-         trade.Buy(lots,symbol,0,0,tp,NULL);
+         trade.Buy(lots,symbol,0,0,tp,TradeComment);
          SetBarsTraded(symbol);      
    }
 
@@ -190,7 +173,7 @@ void RunSymbols(string symbol) {
          if(IchiFilterOn && PricevsIchiCloud(symbol,SenA,SenB,Ten,Kij)!="below") return;
    
          double tp = Bollinger.Lower(0);
-         trade.Sell(lots,symbol,0,0,tp,NULL);
+         trade.Sell(lots,symbol,0,0,tp,TradeComment);
          SetBarsTraded(symbol);
    }
 
@@ -210,6 +193,8 @@ bool IsNewBar() {
 
 void TrailSL(string symbol) {
 
+   TPBol    =  new CiBands;
+   TPBol.Create(symbol,Timeframe,BollingerMAperiod,0,TPBolStDev,AppPrice);
    TPBol.Refresh(-1);
    
    for(int i = PositionsTotal()-1; i>=0; i--) {
