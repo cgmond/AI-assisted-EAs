@@ -1,4 +1,4 @@
-//version 1.23 (Spread buffer OK /retry logic maybe OK 6/17/2025)
+//version 1.24
 #property copyright "Copyright 2025, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
 #property version   "1.00"
