@@ -606,7 +606,7 @@ void SendBuyOrder(double entry){
 
    datetime expiration = iTime(_Symbol,Timeframe,0) + GetExpirationBars() * PeriodSeconds(Timeframe);
    
-      trade.BuyStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0);
+      trade.BuyStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0,TradeComment);
       Print("Buy Order Expiration: ", expiration);
 }
 
@@ -636,7 +636,7 @@ void SendSellOrder(double entry){
    
    datetime expiration = iTime(_Symbol,Timeframe,0) + GetExpirationBars() * PeriodSeconds(Timeframe);
    
-      trade.SellStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0);
+      trade.SellStop(lots,entry,_Symbol,sl,tp,ORDER_TIME_GTC,0,TradeComment);
       Print("Sell Order Expiration: ", expiration);
 
 }
